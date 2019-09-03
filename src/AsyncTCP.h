@@ -97,7 +97,7 @@ class AsyncClient {
     AsyncClient* next;
 
     AsyncClient(tcp_pcb* pcb = 0);
-    ~AsyncClient();
+    virtual ~AsyncClient();
 
     AsyncClient & operator=(const AsyncClient &other);
     AsyncClient & operator+=(const AsyncClient &other);
@@ -115,14 +115,14 @@ class AsyncClient {
     bool free();
 
     bool canSend();//ack is not pending
-    size_t space();
+    virtual size_t space();
     size_t add(const char* data, size_t size, uint8_t apiflags=ASYNC_WRITE_FLAG_COPY);//add for sending
     bool send();//send all data added with the method above
     size_t ack(size_t len); //ack data that you have not acked using the method below
     void ackLater(){ _ack_pcb = false; } //will not ack the current packet. Call from onData
 
-    size_t write(const char* data);
-    size_t write(const char* data, size_t size, uint8_t apiflags=ASYNC_WRITE_FLAG_COPY); //only when canSend() == true
+    virtual size_t write(const char* data);
+    virtual size_t write(const char* data, size_t size, uint8_t apiflags=ASYNC_WRITE_FLAG_COPY); //only when canSend() == true
 
     uint8_t state();
     bool connecting();
