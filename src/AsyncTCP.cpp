@@ -95,7 +95,7 @@ static uint32_t _closed_index = []() {
 
 static inline bool _init_async_event_queue(){
     if(!_async_queue){
-        _async_queue = xQueueCreate(32, sizeof(lwip_event_packet_t *));
+        _async_queue = xQueueCreate(128, sizeof(lwip_event_packet_t *));
         if(!_async_queue){
             return false;
         }
@@ -374,14 +374,15 @@ typedef struct {
 static err_t _tcp_output_api(struct tcpip_api_call_data *api_call_msg){
     tcp_api_call_t * msg = (tcp_api_call_t *)api_call_msg;
     msg->err = ERR_CONN;
+    // if(msg->pcb != NULL && msg->pcb->state == ESTABLISHED && (msg->closed_slot == -1 || !_closed_slots[msg->closed_slot])) {
     if(msg->closed_slot == -1 || !_closed_slots[msg->closed_slot]) {
-        msg->err = tcp_output(msg->pcb);
+            msg->err = tcp_output(msg->pcb);
     }
     return msg->err;
 }
 
 static esp_err_t _tcp_output(tcp_pcb * pcb, int8_t closed_slot) {
-    if(!pcb){
+    if(!pcb || pcb->state != ESTABLISHED){
         return ERR_CONN;
     }
     tcp_api_call_t msg;
@@ -394,6 +395,7 @@ static esp_err_t _tcp_output(tcp_pcb * pcb, int8_t closed_slot) {
 static err_t _tcp_write_api(struct tcpip_api_call_data *api_call_msg){
     tcp_api_call_t * msg = (tcp_api_call_t *)api_call_msg;
     msg->err = ERR_CONN;
+    // if(msg->pcb != NULL && msg->pcb->state == ESTABLISHED && (msg->closed_slot == -1 || !_closed_slots[msg->closed_slot])) {
     if(msg->closed_slot == -1 || !_closed_slots[msg->closed_slot]) {
         msg->err = tcp_write(msg->pcb, msg->write.data, msg->write.size, msg->write.apiflags);
     }
@@ -401,7 +403,7 @@ static err_t _tcp_write_api(struct tcpip_api_call_data *api_call_msg){
 }
 
 static esp_err_t _tcp_write(tcp_pcb * pcb, int8_t closed_slot, const char* data, size_t size, uint8_t apiflags) {
-    if(!pcb){
+    if(!pcb || pcb->state != ESTABLISHED){
         return ERR_CONN;
     }
     tcp_api_call_t msg;
@@ -417,15 +419,16 @@ static esp_err_t _tcp_write(tcp_pcb * pcb, int8_t closed_slot, const char* data,
 static err_t _tcp_recved_api(struct tcpip_api_call_data *api_call_msg){
     tcp_api_call_t * msg = (tcp_api_call_t *)api_call_msg;
     msg->err = ERR_CONN;
-    if(msg->closed_slot == -1 || !_closed_slots[msg->closed_slot]) {
-        msg->err = 0;
+    if(msg->pcb != NULL && msg->pcb->state == ESTABLISHED && (msg->closed_slot == -1 || !_closed_slots[msg->closed_slot])) {
+    // if(msg->closed_slot == -1 || !_closed_slots[msg->closed_slot]) {
+        msg->err = ERR_OK;
         tcp_recved(msg->pcb, msg->received);
     }
     return msg->err;
 }
 
 static esp_err_t _tcp_recved(tcp_pcb * pcb, int8_t closed_slot, size_t len) {
-    if(!pcb){
+    if(!pcb || pcb->state != ESTABLISHED){
         return ERR_CONN;
     }
     tcp_api_call_t msg;
@@ -439,7 +442,8 @@ static esp_err_t _tcp_recved(tcp_pcb * pcb, int8_t closed_slot, size_t len) {
 static err_t _tcp_close_api(struct tcpip_api_call_data *api_call_msg){
     tcp_api_call_t * msg = (tcp_api_call_t *)api_call_msg;
     msg->err = ERR_CONN;
-    if(msg->closed_slot == -1 || !_closed_slots[msg->closed_slot]) {
+    // if(msg->pcb != NULL && msg->pcb->state == ESTABLISHED && (msg->closed_slot == -1 || !_closed_slots[msg->closed_slot])) {
+    if(msg->closed_slot == -1 || !_closed_slots[msg->closed_slot]) {    
         msg->err = tcp_close(msg->pcb);
     }
     return msg->err;
@@ -459,6 +463,7 @@ static esp_err_t _tcp_close(tcp_pcb * pcb, int8_t closed_slot) {
 static err_t _tcp_abort_api(struct tcpip_api_call_data *api_call_msg){
     tcp_api_call_t * msg = (tcp_api_call_t *)api_call_msg;
     msg->err = ERR_CONN;
+    // if(msg->pcb != NULL && msg->pcb->state == ESTABLISHED && (msg->closed_slot == -1 || !_closed_slots[msg->closed_slot])) {
     if(msg->closed_slot == -1 || !_closed_slots[msg->closed_slot]) {
         tcp_abort(msg->pcb);
     }
@@ -565,6 +570,7 @@ AsyncClient::AsyncClient(tcp_pcb* pcb)
 , prev(NULL)
 , next(NULL)
 {
+    log_e("create 0x%08x", (uint32_t)this);
     _pcb = pcb;
     _closed_slot = -1;
     if(_pcb){
@@ -583,6 +589,7 @@ AsyncClient::~AsyncClient(){
         _close();
     }
     _free_closed_slot();
+    log_e("delete 0x%08x", (uint32_t)this);
 }
 
 /*
@@ -739,14 +746,14 @@ int8_t AsyncClient::abort(){
 }
 
 size_t AsyncClient::space(){
-    if((_pcb != NULL) && (_pcb->state == 4)){
+    if(connected()){
         return tcp_sndbuf(_pcb);
     }
     return 0;
 }
 
 size_t AsyncClient::add(const char* data, size_t size, uint8_t apiflags) {
-    if(!_pcb || size == 0 || data == NULL) {
+    if(!connected() || size == 0 || data == NULL) {
         return 0;
     }
     size_t room = space();
@@ -811,9 +818,9 @@ int8_t AsyncClient::_close(){
             err = abort();
         }
         _pcb = NULL;
-        if(_discard_cb) {
-            _discard_cb(_discard_cb_arg, this);
-        }
+    }
+    if(_discard_cb) {
+        _discard_cb(_discard_cb_arg, this);
     }
     return err;
 }
@@ -861,22 +868,10 @@ int8_t AsyncClient::_connected(void* pcb, int8_t err){
 }
 
 void AsyncClient::_error(int8_t err) {
-    if(_pcb){
-        tcp_arg(_pcb, NULL);
-        if(_pcb->state == LISTEN) {
-            tcp_sent(_pcb, NULL);
-            tcp_recv(_pcb, NULL);
-            tcp_err(_pcb, NULL);
-            tcp_poll(_pcb, NULL, 0);
-        }
-        _pcb = NULL;
-    }
     if(_error_cb) {
         _error_cb(_error_cb_arg, this, err);
     }
-    if(_discard_cb) {
-        _discard_cb(_discard_cb_arg, this);
-    }
+    // _close();
 }
 
 //In LwIP Thread
@@ -902,14 +897,19 @@ int8_t AsyncClient::_lwip_fin(tcp_pcb* pcb, int8_t err) {
 
 //In Async Thread
 int8_t AsyncClient::_fin(tcp_pcb* pcb, int8_t err) {
-    _tcp_clear_events(this);
-    if(_discard_cb) {
-        _discard_cb(_discard_cb_arg, this);
-    }
+    // if(!_pcb || pcb != _pcb){
+    //     log_e("0x%08x != 0x%08x", (uint32_t)pcb, (uint32_t)_pcb);
+    //     return ERR_OK;
+    // }
+    _close();
     return ERR_OK;
 }
 
 int8_t AsyncClient::_sent(tcp_pcb* pcb, uint16_t len) {
+    // if(!_pcb || pcb != _pcb){
+    //     log_e("0x%08x != 0x%08x", (uint32_t)pcb, (uint32_t)_pcb);
+    //     return ERR_OK;
+    // }
     _rx_last_packet = millis();
     //log_i("%u", len);
     _pcb_busy = false;
@@ -920,6 +920,10 @@ int8_t AsyncClient::_sent(tcp_pcb* pcb, uint16_t len) {
 }
 
 int8_t AsyncClient::_recv(tcp_pcb* pcb, pbuf* pb, int8_t err) {
+    if(!_pcb || pcb != _pcb){
+        log_e("0x%08x != 0x%08x", (uint32_t)pcb, (uint32_t)_pcb);
+        return ERR_OK;
+    }
     while(pb != NULL) {
         _rx_last_packet = millis();
         //we should not ack before we assimilate the data
@@ -945,6 +949,10 @@ int8_t AsyncClient::_recv(tcp_pcb* pcb, pbuf* pb, int8_t err) {
 }
 
 int8_t AsyncClient::_poll(tcp_pcb* pcb){
+    if(!_pcb || pcb != _pcb){
+        log_e("0x%08x != 0x%08x", (uint32_t)pcb, (uint32_t)_pcb);
+        return ERR_OK;
+    }
     if(!_pcb){
         log_w("pcb is NULL");
         return ERR_OK;
@@ -1002,7 +1010,7 @@ bool AsyncClient::free(){
     if(!_pcb) {
         return true;
     }
-    if(_pcb->state == 0 || _pcb->state > 4) {
+    if(_pcb->state == CLOSED || _pcb->state > ESTABLISHED) {
         return true;
     }
     return false;
@@ -1119,35 +1127,35 @@ bool AsyncClient::connected(){
     if (!_pcb) {
         return false;
     }
-    return _pcb->state == 4;
+    return _pcb->state == ESTABLISHED;
 }
 
 bool AsyncClient::connecting(){
     if (!_pcb) {
         return false;
     }
-    return _pcb->state > 0 && _pcb->state < 4;
+    return _pcb->state > CLOSED && _pcb->state < ESTABLISHED;
 }
 
 bool AsyncClient::disconnecting(){
     if (!_pcb) {
         return false;
     }
-    return _pcb->state > 4 && _pcb->state < 10;
+    return _pcb->state > ESTABLISHED && _pcb->state < TIME_WAIT;
 }
 
 bool AsyncClient::disconnected(){
     if (!_pcb) {
         return true;
     }
-    return _pcb->state == 0 || _pcb->state == 10;
+    return _pcb->state == CLOSED || _pcb->state == TIME_WAIT;
 }
 
 bool AsyncClient::freeable(){
     if (!_pcb) {
         return true;
     }
-    return _pcb->state == 0 || _pcb->state > 4;
+    return _pcb->state == CLOSED || _pcb->state > ESTABLISHED;
 }
 
 bool AsyncClient::canSend(){
@@ -1311,8 +1319,20 @@ void AsyncServer::end(){
 
 //runs on LwIP thread
 int8_t AsyncServer::_accept(tcp_pcb* pcb, int8_t err){
+    bool freeSlotAvailable = false;
+    for (int i = 0; i < _number_of_closed_slots; ++ i) {
+        if (_closed_slots[i] != 0) {
+            freeSlotAvailable = true;
+            break;
+        }
+    }
+
+    if (!freeSlotAvailable) {
+        log_e("no slot available");
+    }
+
     //ets_printf("+A: 0x%08x\n", pcb);
-    if(_connect_cb){
+    if(freeSlotAvailable && _connect_cb){
         AsyncClient *c = new AsyncClient(pcb);
         if(c){
             c->setNoDelay(_noDelay);
