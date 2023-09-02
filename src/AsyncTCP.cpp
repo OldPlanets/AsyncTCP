@@ -1291,7 +1291,7 @@ void AsyncServer::begin(){
         return;
     }
 
-    static uint8_t backlog = 5;
+    static uint8_t backlog = 2;
     _pcb = _tcp_listen_with_backlog(_pcb, backlog);
     if (!_pcb) {
         log_e("listen_pcb == NULL");
