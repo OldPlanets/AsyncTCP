@@ -141,6 +141,8 @@ class AsyncClient {
 
   protected:
     tcp_pcb* _pcb;
+    tcp_pcb* _try_connect_pcb = 0;
+
     int8_t  _closed_slot;
 
     AcConnectHandler _connect_cb;
